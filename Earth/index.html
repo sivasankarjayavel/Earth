@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>three</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <script type="importmap">
+            {
+                "imports": {
+                    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+                }
+            }
+        </script>
+    <style>
+        #my_canvas {
+            /* position: absolute; */
+            width: 100%;
+            height: 100vh;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            width: 100%;
+            overflow: hidden;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="my_canvas"></canvas>
+    <script type="module">
+        import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.161.0/three.module.js'
+        import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+
+        let lineObjects = [];
+        let totalLines = 0;
+
+        var scene = new THREE.Scene();
+        const raycaster = new THREE.Raycaster();
+        const pointer = new THREE.Vector2();
+        var camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 1, 10000);
+        camera.position.set(0, 0, 300);
+        scene.add(camera);
+
+        var renderer = new THREE.WebGLRenderer({ canvas: my_canvas });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        var controls = new OrbitControls(camera, renderer.domElement);
+        controls.rotateSpeed = 0.5;
+        controls.enablePan = false;
+        controls.minDistance = 100;
+        controls.update();
+        var Objects = [];
+
+        const textureLoader = new THREE.TextureLoader();
+        const texture = textureLoader.load('image.png');
+        texture.colorSpace = THREE.SRGBColorSpace;
+
+        const Earthmaterial = new THREE.MeshStandardMaterial({ map: texture, side: THREE.DoubleSide });
+
+        var Earth = new THREE.Mesh(
+            new THREE.SphereGeometry(100, 64, 64, 0, Math.PI * 2, THREE.MathUtils.degToRad(0), THREE.MathUtils.degToRad(180)).toNonIndexed(),
+            Earthmaterial
+        );
+
+
+        Earth.rotation.set(0, -Math.PI, 0);
+        scene.add(Earth);
+        Objects.push(Earth);
+
+        var light = new THREE.AmbientLight(0xffffff);
+        scene.add(light);
+
+
+        const material = new THREE.LineBasicMaterial({ color: 0xffffff });
+
+        function createBound(boxCoordinates) {
+            // console.log(boxCoordinates);
+            fetch('/get', {
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                method: "POST",
+                body: JSON.stringify({ coordinates: boxCoordinates })
+            })
+                .then((response) => response.json())
+                .then((data) => {
+                    data.forEach(element => {
+                        totalLines++;
+                        if (element.geometry.type === "Polygon") {
+                            let coordinates = element.geometry.coordinates;
+                            // console.log(coordinates[0]);
+                            createLine(coordinates[0]);
+                        }
+                        else if (element.geometry.type === "MultiPolygon") {
+                            let coordinates = element.geometry.coordinates;
+                            coordinates.forEach(element => {
+                                // console.log(element[0]);
+                                createLine(element[0]);
+                            })
+                        }
+                    });
+                    console.log("TOTAL LINES = " + totalLines);
+                })
+        }
+
+
+        // function createLine(coordinates) {
+        //     scene.remove(Earth);
+        //     // totalLines++;
+        //     let lines = [];
+        //     for (let i = 0; i < coordinates.length; i++) {
+        //         const coordinate = coordinates[i];
+        //         const vertex = new THREE.Vector2(coordinate[0], coordinate[1]);
+        //         lines.push(vertex);
+        //     }
+        //     lines.push(new THREE.Vector2(coordinates[0][0], coordinates[0][1]));
+        //     // console.log(lines);
+
+        //     const geometry = new THREE.BufferGeometry().setFromPoints(lines);
+        //     const line = new THREE.Line(geometry, material);
+        //     scene.add(line);
+        //     console.log("TOTAL LINES = " + totalLines);
+        // }
+
+
+
+        function createLine(coordinates) {
+            // console.log(coordinates);
+            const vertex = [];
+            let lines = [];
+            let value = [];
+            for (let i = 0; i < coordinates.length; i++) {
+                value = [];
+                const coordinate = coordinates[i];
+                vertex.push(coordinate[0], coordinate[1]);
+                var lon = coordinate[0];
+                var lat = coordinate[1];
+
+                value.push(Math.cos(lat * Math.PI / 180) * Math.cos(lon * Math.PI / 180) * 100.1);
+                value.push(Math.cos(lat * Math.PI / 180) * Math.sin(lon * Math.PI / 180) * 100.1);
+                value.push(Math.sin(lat * Math.PI / 180) * 100.1);
+                lines.push(new THREE.Vector3(value[0], value[1], value[2]));
+            }
+            lines.push(lines[0]);
+            const geometry = new THREE.BufferGeometry().setFromPoints(lines);
+            // console.log(lines);
+            const line = new THREE.Line(geometry, material);
+            line.rotation.setFromVector3(new THREE.Vector3(-Math.PI / 2, 0, -Math.PI));
+            scene.add(line);
+            lineObjects.push(line);
+            // console.log(line);
+        }
+
+
+
+        window.addEventListener('resize', onWindowResize);
+        window.addEventListener('dblclick', onPointerClick);
+        window.addEventListener('wheel', updateCenterCoordinates);
+
+        function onPointerClick(event) {
+            pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+            pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(pointer, camera);
+            let intersects = raycaster.intersectObjects(Objects, false);
+
+            if (intersects.length > 0) {
+                let intersectionPoint = intersects[0].point;
+                let latlong = [];
+
+                let lati = 90 - (57.2957795 * Math.acos(-intersectionPoint.y / 100));
+
+
+                if (Math.abs(lati) < 80.01) {
+                    if (intersectionPoint.y >= 0) {
+                        latlong.x = (-Number(lati));
+                    }
+                    if (intersectionPoint.y < 0) {
+                        latlong.x = Number(-(lati));
+                    }
+                    if (intersectionPoint.z >= 0) {
+                        latlong.y = Number(90 + (57.2957795 * Math.atan(intersectionPoint.x / intersectionPoint.z)));
+                        console.log("2");
+                    }
+                    if (intersectionPoint.z < 0) {
+                        let longi = (180 + (57.2957795 * Math.atan(intersectionPoint.x / intersectionPoint.z)));
+                        if (longi <= 180) {
+                            latlong.y = Number(longi -270);
+                            console.log("3");
+                        } else {
+                            latlong.y = Number(-90 - (180 - longi));
+                            console.log("4");
+                        }
+                    }
+                    console.log([latlong.y, latlong.x]);
+                }
+
+
+                // if (Math.abs(lati) < 80.01) {
+                //     if (intersectionPoint.y >= 0) {
+                //         latlong.x = -Number(lati);
+                //     } else {
+                //         latlong.x = Number(-lati);
+                //     }
+                //     if (intersectionPoint.z >= 0) {
+                //         latlong.y = 90 + (57.2957795 * Math.atan(intersectionPoint.x / intersectionPoint.z));
+                //     } else {
+                //         let longi = 180 + (57.2957795 * Math.atan(intersectionPoint.x / intersectionPoint.z));
+                //         if (longi <= 180) {
+                //             latlong.y = longi;
+                //         } else {
+                //             longi = 180 + (57.2957795 * Math.atan(intersectionPoint.z / intersectionPoint.x));
+                //             latlong.y = -90 - (90 - longi);
+                //         }
+                //     }
+                //     console.log([latlong.y, latlong.x]);
+                // }
+            }
+        }
+
+
+        function latLon(x, y, z) {
+            let latlong = [];
+            let lati = 90 - (57.2957795 * Math.acos(-y / 100));
+            let longi = 0;
+
+            // if (Math.abs(lati) < 80.01) {
+            //     if (y >= 0) {
+            //         latlong.x = -Number(lati);
+            //     } else {
+            //         latlong.x = Number(-lati);
+            //     }
+            //     if (z >= 0) {
+            //         latlong.y = 90 + (57.2957795 * Math.atan(x / z));
+            //     } else {
+            //         longi = 180 + (57.2957795 * Math.atan(x / z));
+            //         if (longi <= 180) {
+            //             latlong.y = longi;
+            //         } else {
+            //             longi = 180 + (57.2957795 * Math.atan(z / x));
+            //             latlong.y = -90 - (90 - longi);
+            //         }
+            //     }
+            // }
+            // return [latlong.y, latlong.x];
+
+            if (Math.abs(lati) < 80.01) {
+                if (y >= 0) {
+                    latlong.x = (-Number(lati));
+                }
+                if (y < 0) {
+                    latlong.x = Number(-(lati));
+                }
+                if (z >= 0) {
+                    latlong.y = Number(90 + (57.2957795 * Math.atan(x / z)));
+                }
+                if (z < 0) {
+                    let longi = (180 + (57.2957795 * Math.atan(x / z)));
+                    if (longi <= 180) {
+                        latlong.y = Number(longi - 270);
+                    } else {
+                        latlong.y = Number(-90 - (180 - longi));
+                    }
+                }
+            }
+            return [latlong.y, latlong.x];
+        }
+
+        function updateCenterCoordinates() {
+            totalLines = 0;
+            lineObjects.forEach(element => {
+                scene.remove(element);
+            })
+            camera.zoom++;
+            // console.log(camera.zoom);
+
+            var vector = new THREE.Vector2(0, 0);
+            raycaster.setFromCamera(vector, camera);
+            let intersects = raycaster.intersectObject(Earth);
+
+            if (intersects.length > 0) {
+                let intersectionPoint = intersects[0].point;
+                findCorner(intersectionPoint.x, intersectionPoint.y, intersectionPoint.z);
+
+                function findCorner(x, y, z) {
+                    let topleftCoordinates = new THREE.Vector3(0, 0, 0);
+                    let bottomleftCoordinates = new THREE.Vector3(0, 0, 0);
+                    let toprightCoordinates = new THREE.Vector3(0, 0, 0);
+                    let bottomrightCoordinates = new THREE.Vector3(0, 0, 0);
+                    let intersection = new THREE.Vector3(x, y, z);
+
+                    let box = [];
+
+                    topleftCoordinates.x = intersection.x - 15;
+                    topleftCoordinates.y = intersection.y + 15;
+                    topleftCoordinates.z = intersection.z;
+                    box.push(latLon(topleftCoordinates.x, topleftCoordinates.y, topleftCoordinates.z));
+
+
+                    bottomleftCoordinates.x = intersection.x - 15;
+                    bottomleftCoordinates.y = intersection.y - 15;
+                    bottomleftCoordinates.z = intersection.z;
+                    box.push(latLon(bottomleftCoordinates.x, bottomleftCoordinates.y, bottomleftCoordinates.z));
+
+
+                    toprightCoordinates.x = intersection.x + 15;
+                    toprightCoordinates.y = intersection.y - 15;
+                    toprightCoordinates.z = intersection.z;
+                    box.push(latLon(toprightCoordinates.x, toprightCoordinates.y, toprightCoordinates.z));
+
+
+                    bottomrightCoordinates.x = intersection.x + 15;
+                    bottomrightCoordinates.y = intersection.y + 15;
+                    bottomrightCoordinates.z = intersection.z;
+                    box.push(latLon(bottomrightCoordinates.x, bottomrightCoordinates.y, bottomrightCoordinates.z))
+
+                    createLine(box);
+                    box.push(box[0]);
+                    createBound(box);
+
+                }
+            }
+        }
+
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function render() {
+            requestAnimationFrame(render);
+            controls.update();
+            renderer.render(scene, camera)
+        }
+        render()
+
+    </script>
+</body>
+
+
+</html>
+
+<!-- // function reverseFindCorner(latitude, longitude) {
+// let latRad = (90 - latitude) * Math.PI / 180;
+// let lonRad = longitude * Math.PI / 180;
+
+// let x = Math.sin(latRad) * Math.cos(lonRad);
+// let y = Math.cos(latRad);
+// let z = -Math.sin(latRad) * Math.sin(lonRad);
+
+// return { x, y, z };
+function findCorner(x, y, z) {
+    let box = [];
+
+    // Define the size of the box
+    const boxSize = 15;
+
+    // Convert the center point to spherical coordinates
+    const centerLatLon = latLon(x, y, z);
+
+    // Calculate the corners of the box in spherical coordinates
+    const topLeft = [centerLatLon[0] + boxSize, centerLatLon[1] - boxSize];
+    const topRight = [centerLatLon[0] + boxSize, centerLatLon[1] + boxSize];
+    const bottomLeft = [centerLatLon[0] - boxSize, centerLatLon[1] - boxSize];
+    const bottomRight = [centerLatLon[0] - boxSize, centerLatLon[1] + boxSize];
+
+    // Convert the spherical coordinates of the corners to Cartesian coordinates
+    const vertices = [topLeft, topRight, bottomRight, bottomLeft, topLeft];
+    vertices.forEach(vertex => {
+        const lon = vertex[1];
+        const lat = vertex[0];
+        const x = Math.cos(lat * Math.PI / 180) * Math.cos(lon * Math.PI / 180) * 100.1;
+        const y = Math.cos(lat * Math.PI / 180) * Math.sin(lon * Math.PI / 180) * 100.1;
+        const z = Math.sin(lat * Math.PI / 180) * 100.1;
+        box.push(new THREE.Vector3(x, y, z));
+    });
+
+    // Create lines on the globe connecting the box corners
+    createLine(box.map(coord => [coord.x, coord.y, coord.z]));
+}
+
+
+
+
+// } -->
